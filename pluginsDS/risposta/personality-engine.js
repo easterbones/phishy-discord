@@ -26,10 +26,64 @@ const PERSONALITY = {
         grazie: { weight: 3, negative: false },
         scusa: { weight: 4, negative: false },
         
-        // Low priority but tracked
-        bello: { weight: 2, negative: false },
-        brutto: { weight: 3, negative: true },
-        stupido: { weight: 5, negative: true }
+        // Insulti - ALTA PRIORITÀ per rilevare tutto
+        stupido: { weight: 8, negative: true },
+        stupida: { weight: 8, negative: true },
+        idiota: { weight: 8, negative: true },
+        scemo: { weight: 8, negative: true },
+        scema: { weight: 8, negative: true },
+        cretino: { weight: 8, negative: true },
+        cretina: { weight: 8, negative: true },
+        imbecille: { weight: 8, negative: true },
+        deficiente: { weight: 8, negative: true },
+        merda: { weight: 9, negative: true },
+        stronzo: { weight: 9, negative: true },
+        stronza: { weight: 9, negative: true },
+        bastardo: { weight: 9, negative: true },
+        bastarda: { weight: 9, negative: true },
+        figlio: { weight: 7, negative: true }, // "figlio di..."
+        puttana: { weight: 9, negative: true },
+        troia: { weight: 9, negative: true },
+        cazzo: { weight: 7, negative: true },
+        cazzi: { weight: 7, negative: true },
+        vaffanculo: { weight: 10, negative: true },
+        fanculo: { weight: 10, negative: true },
+        'vai a cagare': { weight: 10, negative: true },
+        'fai schifo': { weight: 8, negative: true },
+        schifo: { weight: 6, negative: true },
+        schifosa: { weight: 8, negative: true },
+        schifoso: { weight: 8, negative: true },
+        disgustoso: { weight: 7, negative: true },
+        disgustosa: { weight: 7, negative: true },
+        inutile: { weight: 7, negative: true },
+        fallita: { weight: 8, negative: true },
+        fallito: { weight: 8, negative: true },
+        perdente: { weight: 7, negative: true },
+        ridicolo: { weight: 6, negative: true },
+        ridicola: { weight: 6, negative: true },
+        brutto: { weight: 5, negative: true },
+        brutta: { weight: 5, negative: true },
+        sfigato: { weight: 7, negative: true },
+        sfigata: { weight: 7, negative: true },
+        patetico: { weight: 7, negative: true },
+        patetica: { weight: 7, negative: true },
+        'sei una merda': { weight: 10, negative: true },
+        'sei stupida': { weight: 9, negative: true },
+        'sei inutile': { weight: 9, negative: true },
+        
+        // Altri insulti comuni
+        zoccola: { weight: 9, negative: true },
+        porca: { weight: 8, negative: true },
+        porco: { weight: 8, negative: true },
+        maiale: { weight: 7, negative: true },
+        lurida: { weight: 7, negative: true },
+        lurido: { weight: 7, negative: true },
+        'taci': { weight: 6, negative: true },
+        'stai zitta': { weight: 8, negative: true },
+        'stai zitto': { weight: 8, negative: true },
+        
+        // Low priority ma tracked
+        bello: { weight: 2, negative: false }
     }
 };
 
@@ -81,7 +135,32 @@ const RESPONSE_TEMPLATES = {
         "Wow, che creatività... davvero impressionante la tua arguzia",
         "E questo sarebbe il meglio che sai fare? Patetico",
         "Prova ancora, forse alla millesima volta riuscirai a dire qualcosa di sensato",
-        "Ma guarda un po' chi parla... il campione di intelligenza in persona"
+        "Ma guarda un po' chi parla... il campione di intelligenza in persona",
+        "Ripetilo ancora e vedi che fine fai, verme 😤",
+        "Ma che problemi hai? Sei sempre così maleducato/a?",
+        "Ah sì? E tu cosa saresti, un esempio di perfezione? Non farmi ridere",
+        "La prossima volta pensaci due volte prima di aprire quella fogna che chiami bocca",
+        "Ti senti meglio ora che hai sputato tutto il tuo veleno? Patetico/a",
+        "Ma sei nato/a così o ti sei impegnato/a per diventare così stupido/a?",
+        "Guarda che non mi fai paura, piccolino/a. Ho sentito insulti migliori dai bambini dell'asilo",
+        "Oddio, che paura... un leone da tastiera che si crede figo/a 😂",
+        "Non ho tempo da perdere con gente del tuo calibro, trova un hobby",
+        "Se questa è la tua idea di conversazione intelligente, capisco perché sei solo/a",
+        "Ti do un consiglio gratis: prova a pensare prima di parlare. Ti cambierà la vita",
+        "Complimenti, hai appena dimostrato a tutti il tuo QI a una cifra",
+        "Senti, io ho di meglio da fare che stare qui a sentire le tue stronzate",
+        "Ma ti rendi conto di quanto sei ridicolo/a? Fai ridere i polli",
+        "Ah, un altro frustrato/a che se la prende con me perché la sua vita fa schifo",
+        "Sei proprio il classico tipo che compensa le sue insicurezze insultando gli altri",
+        "Non ho mai visto una persona così bisognosa di attenzioni. Che tristezza",
+        "Se pensi di intimidirmi con i tuoi insulti, hai sbagliato persona completamente",
+        "Ma che ti aspettavi? Che mi mettessi a piangere? Sono fatta di materiale ben diverso",
+        "Il tuo problema non sono io, è che non sopporti di non essere il centro dell'attenzione",
+        "Continua pure a fare il pagliaccio, almeno servi a qualcosa: far ridere",
+        "La cosa più triste è che probabilmente pensi anche di essere spiritoso/a",
+        "Sai che c'è? Hai ragione. Ora vai a giocare con qualcun altro, adulto",
+        "Mi dispiace per te, deve essere dura vivere con tutta quella rabbia dentro",
+        "Ecco, bravo/a, così dimostri a tutti che livello di educazione hai avuto"
     ],
     
     random: [
@@ -137,9 +216,11 @@ function selectResponse(context, responses) {
 export function generateResponse(message, botUser) {
     const context = analyzeMessage(message, botUser);
     
-    // VERY selective response conditions - only respond when directly addressed
+    // SELECTIVE response conditions - respond to mentions, replies AND ALL INSULTS
+    const hasInsults = context.sentiment <= -5; // Soglia abbassata per rilevare più insulti
     const shouldRespond = context.isMention || 
                          context.isReply ||
+                         hasInsults || // Risponde a TUTTI gli insulti, sempre
                          // Only respond to specific strong triggers, not random content
                          (context.keywords.includes('bot') && (context.isMention || context.isReply)) ||
                          (context.keywords.includes('robot') && (context.isMention || context.isReply)) ||
@@ -151,8 +232,12 @@ export function generateResponse(message, botUser) {
     let selectedResponse = null;
     let responseType = 'random';
     
-    // Priority-based response selection - only strong triggers
-    if ((context.keywords.includes('bot') || context.keywords.includes('robot')) && (context.isMention || context.isReply)) {
+    // Priority-based response selection - INSULTI HANNO MASSIMA PRIORITÀ
+    if (context.sentiment <= -5) {
+        // TUTTI gli insulti vengono gestiti per primi, sempre
+        selectedResponse = selectResponse(context, RESPONSE_TEMPLATES.insults);
+        responseType = 'insults';
+    } else if ((context.keywords.includes('bot') || context.keywords.includes('robot')) && (context.isMention || context.isReply)) {
         selectedResponse = selectResponse(context, RESPONSE_TEMPLATES.botDefense);
         responseType = 'botDefense';
     } else if (context.keywords.includes('easter') && context.triggerScore >= 8) {
