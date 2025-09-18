@@ -1,0 +1,10 @@
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const file = path.resolve(__dirname, '../lib/print.js');
+const buf = fs.readFileSync(file);
+console.log('length', buf.length);
+console.log('first 16 bytes hex:', buf.slice(0,16).toString('hex'));
+console.log('first 16 bytes utf8:', buf.slice(0,16).toString('utf8'));

@@ -1,0 +1,42 @@
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+package-lock.json
+pnpm-lock.yaml
+
+# Env
+.env
+.env.*
+
+# Logs
+logs/
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+
+# Build/temp
+dist/
+build/
+tmp/
+temp/
+
+# Local DB/runtime state (don't commit production data)
+database/*.json
+PhiShy-MD/database/*.json
+tmp_*.json
+
+# Media caches
+downloads/
+temp_audio/
+
+# Misc
+*.sqlite
+coverage/

@@ -1,0 +1,705 @@
+import { ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
+import { createEmbed } from '../../lib/utils.js';
+
+const CUSTOM_ID_PREFIX = 'rabbitGame';
+
+// Sessioni di gioco in memoria (per utente)
+const sessions = new Map();
+
+// Personaggi giocabili con piccoli bonus
+const characters = {
+    runner: { key: 'runner', name: 'Corridore', emoji: '🏃', perk: 'speed', startItems: ['spray'] },
+    tech: { key: 'tech', name: 'Ingegnere', emoji: '🛠️', perk: 'tools', startItems: ['accendino', 'chiave'] },
+    artist: { key: 'artist', name: 'Mimo', emoji: '🎭', perk: 'blend', startItems: ['maschera'] },
+    occult: { key: 'occult', name: 'Occultista', emoji: '🕯️', perk: 'ritual', startItems: ['amuleto'] }
+};
+
+// Finali aggiuntivi influenzati da oggetti/perk
+const bonusEndings = {
+    spray_escape: {
+        number: 3,
+        title: 'Finale — Occhi che Bruciano',
+        type: 'success',
+        description: 'Spruzzi lo spray urticante verso la maschera: il coniglio barcolla, accecato.',
+        outcome: 'Ti infili tra due auto parcheggiate e tagli per un cortile. Quando lui si riprende, sei già lontano.',
+        lesson: 'Un piccolo strumento usato al momento giusto vale più di un piano perfetto.'
+    },
+    fireworks_escape: {
+        number: 3,
+        title: 'Finale — Pioggia di Scintille',
+        type: 'success',
+        description: 'Accendi i petardi con l\'accendino e li scagli alle sue spalle.',
+        outcome: 'Il fragore lo costringe a coprirsi il viso: guadagni metri preziosi e ti dilegui su una scalinata laterale.',
+        lesson: 'La distrazione giusta è come un varco aperto nel buio.'
+    },
+    mask_blend: {
+        number: 4,
+        title: 'Finale — Volto tra i Volti',
+        type: 'neutral',
+        description: 'Indossi una maschera neutra e rallenti il passo, seguendo il ritmo della musica.',
+        outcome: 'Il coniglio perde la tua traccia tra centinaia di travestimenti simili. Quando si accorge dell\'errore, tu sei già oltre il corteo.',
+        lesson: 'A volte non serve correre: basta diventare parte dello sfondo.'
+    },
+    amulet_guard: {
+        number: 10,
+        title: 'Finale — Cerchio Protetto',
+        type: 'success',
+        description: 'Stringi l\'amuleto e tracci un cerchio di sale sulla soglia.',
+        outcome: 'Il coniglio indugia, incapace di varcare il confine. Trovi un passaggio secondario e scappi sul retro.',
+        lesson: 'Le antiche paure hanno ancora potere, se sai chiamarle per nome.'
+    }
+};
+Object.assign(endings, bonusEndings);
+
+// Oggetti collezionabili
+const ITEMS = {
+    accendino: { key: 'accendino', name: 'Accendino', emoji: '🔥', desc: 'Accende stoppini e candele.', once: false },
+    spray: { key: 'spray', name: 'Spray urticante', emoji: '🧴', desc: 'Acceca e rallenta per pochi secondi.', once: true },
+    maschera: { key: 'maschera', name: 'Maschera neutra', emoji: '🎭', desc: 'Ti confondi nella folla.', once: false },
+    amuleto: { key: 'amuleto', name: 'Amuleto benedetto', emoji: '🪬', desc: 'Tiene lontane presenze ostili.', once: false },
+    estintore: { key: 'estintore', name: 'Estintore', emoji: '🧯', desc: 'Spegne incendi imprevisti.', once: true },
+    fuochi: { key: 'fuochi', name: 'Petardi', emoji: '🎆', desc: 'Rumore e luce per distrarre.', once: true },
+    chiave: { key: 'chiave', name: 'Chiave scheletrica', emoji: '🗝️', desc: 'Apre vecchie serrature.', once: false }
+};
+
+// Dove appaiono oggetti raccoglibili (per nodo)
+const nodeCollectibles = {
+    alley: ['accendino', 'spray'],
+    crowd: ['maschera', 'fuochi'],
+    bus: ['estintore'],
+    house: ['amuleto', 'chiave']
+};
+
+function getSession(userId) {
+    let s = sessions.get(userId);
+    if (!s) {
+        s = { character: null, inventory: {}, collected: {}, flags: {}, startedAt: Date.now() };
+        sessions.set(userId, s);
+    }
+    return s;
+}
+
+function addItem(session, key, qty = 1) {
+    session.inventory[key] = (session.inventory[key] || 0) + qty;
+}
+
+function hasItem(session, key) {
+    return (session.inventory[key] || 0) > 0;
+}
+
+function useItem(session, key) {
+    if (!hasItem(session, key)) return false;
+    session.inventory[key] -= 1;
+    if (session.inventory[key] <= 0) delete session.inventory[key];
+    return true;
+}
+
+const storyNodes = {
+    intro: {
+        title: 'Notte di Halloween',
+        description: [
+            'Sei inseguito da un uomo incappucciato con la maschera da coniglio.',
+            'La nebbia odora di zucchero bruciato e ferro. Scegli chi vuoi essere.'
+        ].join(' '),
+        options: [
+            { id: 'char_runner', label: 'Corridore', detail: 'Scatti rapidi e respiro d\'acciaio.', emoji: '🏃', target: { type: 'char', id: 'runner' } },
+            { id: 'char_tech', label: 'Ingegnere', detail: 'Attrezzi di fortuna, mente pratica.', emoji: '🛠️', target: { type: 'char', id: 'tech' } },
+            { id: 'char_artist', label: 'Mimo', detail: 'Si confonde tra costumi e luci.', emoji: '🎭', target: { type: 'char', id: 'artist' } },
+            { id: 'char_occult', label: 'Occultista', detail: 'Talismani, candele e superstizione.', emoji: '🕯️', target: { type: 'char', id: 'occult' } }
+        ]
+    },
+    start: {
+        title: 'Fuga di Halloween',
+        description: [
+            'La notte di Halloween tinge la città di nebbia, coriandoli appiccicosi e sirene lontane.',
+            'Alle tue spalle, l\'uomo dal cappuccio e dalla maschera da coniglio allunga i passi: il suo respiro fischia dietro le orecchie di lattice.',
+            'Ogni lampione vibra, ogni vetrina riflette la sua ombra deformata. È il momento di scegliere una via di fuga.'
+        ].join(' '),
+        options: [
+            {
+                id: 'alley',
+                label: 'Svolta nel vicolo laterale',
+                detail: 'Un corridoio stretto tra mattoni umidi e cassonetti traboccanti.',
+                emoji: '↪️',
+                target: { type: 'node', id: 'alley' }
+            },
+            {
+                id: 'crowd',
+                label: 'Confonditi nella folla del festival',
+                detail: 'Musica distorta, costumi sgargianti e odore di zucchero filato.',
+                emoji: '🎭',
+                target: { type: 'node', id: 'crowd' }
+            },
+            {
+                id: 'bus',
+                label: 'Salta sul bus notturno in corsa',
+                detail: 'Le porte stanno per chiudersi: basta un balzo ben calcolato.',
+                emoji: '🚌',
+                target: { type: 'node', id: 'bus' }
+            },
+            {
+                id: 'house',
+                label: 'Rifugiati nella casa del rigattiere',
+                detail: 'Tende lacere, finestre rotte, ma un tetto sopra la testa.',
+                emoji: '🏚️',
+                target: { type: 'node', id: 'house' }
+            }
+        ]
+    },
+    alley: {
+        title: 'Il Vicolo che Odora di Ruggine',
+        description: [
+            'Ti infili nel vicolo e la festa alle tue spalle svanisce dietro la nebbia.',
+            'I muri sudano umidità e l\'odore dei cassonetti taglia il respiro, ma il coniglio non rallenta.',
+            'Ogni passo risuona sulle pozzanghere nere come il bitume.'
+        ].join(' '),
+        options: [
+            {
+                id: 'alley_hide',
+                label: 'Schivola dietro i cassonetti',
+                detail: 'Ti rannicchi nell\'immondizia sperando che la puzza mascheri il tuo respiro.',
+                emoji: '🗑️',
+                target: { type: 'ending', id: 'alley_caught' }
+            },
+            {
+                id: 'alley_fire_escape',
+                label: 'Scala la vecchia scala antincendio',
+                detail: 'Gradini arrugginiti verso il tetto del cinema, tra cavi pendenti e corvi.',
+                emoji: '🪜',
+                target: { type: 'ending', id: 'rooftop_escape' }
+            },
+            {
+                id: 'alley_fireworks',
+                label: 'Accendi le cassette di fuochi abbandonate',
+                detail: 'Una pioggia di scintille per accecarlo... o per illuminarti.',
+                emoji: '🎆',
+                target: { type: 'ending', id: 'alley_fireworks' }
+            }
+        ]
+    },
+    crowd: {
+        title: 'Il Cuore della Festa',
+        description: [
+            'Raggiungi il viale principale, travolto da marionette giganti e passi di danza stonati.',
+            'Le casse pompano bassi che scuotono lo stomaco mentre l\'uomo mascherato si fa largo con le spalle.',
+            'Ogni volto dipinto potrebbe essere un alleato, o un ostacolo.'
+        ].join(' '),
+        options: [
+            {
+                id: 'crowd_stage',
+                label: 'Sali sul palco e chiedi aiuto',
+                detail: 'Gli artisti hanno microfoni, fari e un pubblico pronto a reagire.',
+                emoji: '🎤',
+                target: { type: 'ending', id: 'crowd_guardian' }
+            },
+            {
+                id: 'crowd_unmask',
+                label: 'Affrontalo e strappa la maschera',
+                detail: 'Se scopri chi è, potresti spezzare l\'incantesimo della paura.',
+                emoji: '🎭',
+                target: { type: 'ending', id: 'identity_reveal' }
+            },
+            {
+                id: 'crowd_panic',
+                label: 'Urla allarme e spingi la folla',
+                detail: 'Crei caos per sparire tra le persone, costi quel che costi.',
+                emoji: '⚠️',
+                target: { type: 'ending', id: 'panic_trample' }
+            }
+        ]
+    },
+    bus: {
+        title: 'Linea Notturna 666',
+        description: [
+            'La fermata lampeggia tra neon viola e pubblicità animate.',
+            'Il bus apre le porte con un sospiro pneumatico, l\'autista ti fissa dagli specchi.',
+            'Dietro di te senti le sneakers dell\'uomo mascherato strisciare sull\'asfalto bagnato.'
+        ].join(' '),
+        options: [
+            {
+                id: 'bus_driver',
+                label: 'Implora l\'autista di partire subito',
+                detail: 'Prometti che non è uno scherzo e indica il coniglio che avanza.',
+                emoji: '🛑',
+                target: { type: 'ending', id: 'bus_driver_save' }
+            },
+            {
+                id: 'bus_hide',
+                label: 'Nasconditi in fondo tra i sedili',
+                detail: 'Ti rannicchi dietro un costume da vampiro lasciato a metà.',
+                emoji: '🪑',
+                target: { type: 'ending', id: 'bus_trap' }
+            }
+        ]
+    },
+    house: {
+        title: 'La Casa del Rigattiere',
+        description: [
+            'Spalanchi la porta cigolante e l\'odore di libri umidi ti avvolge.',
+            'Il pavimento scricchiola sotto ogni passo e gli specchi incrinati moltiplicano la tua sagoma.',
+            'L\'uomo mascherato varca la soglia lentamente, trascinando una lama contro il muro tappezzato.'
+        ].join(' '),
+        options: [
+            {
+                id: 'house_barricade',
+                label: 'Blocca la porta con la libreria',
+                detail: 'Guadagni secondi, ma la casa diventa una trappola.',
+                emoji: '📚',
+                target: { type: 'ending', id: 'house_siege' }
+            },
+            {
+                id: 'house_tunnel',
+                label: 'Apri la botola verso il tunnel segreto',
+                detail: 'Un corridoio di servizio corre sotto la strada fino al canale.',
+                emoji: '🕳️',
+                target: { type: 'ending', id: 'house_tunnel_escape' }
+            }
+        ]
+    }
+};
+
+const endings = {
+    alley_caught: {
+        number: 1,
+        title: 'Finale 1/10 — Catturato nel Vicolo',
+        type: 'fail',
+        description: 'La puzza dei sacchi neri ti annebbia i sensi mentre trattieni il respiro. Il passo dell\'uomo si ferma a pochi centimetri dalla tua nascondiglio.',
+        outcome: 'Un guanto ti afferra per il collo e ti trascina verso la luce arancione del lampione. La maschera da coniglio resta impassibile mentre sussurra: «Ti ho sentito tremare tutto il tempo».',
+        lesson: 'Restare fermi non basta quando non hai una via di fuga.'
+    },
+    alley_fireworks: {
+        number: 2,
+        title: 'Finale 2/10 — Fuochi che si Rivoltano',
+        type: 'fail',
+        description: 'Accendi lo stoppino con mani febbricitanti. Le casse di fuochi esplodono in un turbine di scintille blu.',
+        outcome: 'Per un istante l\'uomo arretra, ma le fiamme ti lambiscono la giacca e ti fanno cadere. Rotoli sull\'asfalto, stordito, mentre la sagoma dal cappuccio ti sovrasta ridendo piano.',
+        lesson: 'Anche la migliore distrazione può trasformarsi in arma contro di te.'
+    },
+    rooftop_escape: {
+        number: 3,
+        title: 'Finale 3/10 — Fuga sui Tetti',
+        type: 'success',
+        description: 'Corri lungo la scala arrugginita, le mani graffiate ma decise. Ti lanci sul tetto del cinema afferrando un cavo teso.',
+        outcome: 'Dall\'alto vedi il coniglio fermarsi, troppo tardi per seguirti. Attraversi le terrazze, scivoli dentro la serra di un fiorista e sbuchi in una corte illuminata da zucche. Sei salvo, almeno per stanotte.',
+        lesson: 'La fuga migliore è quella che cambia prospettiva e ti porta fuori dal suo campo visivo.'
+    },
+    crowd_guardian: {
+        number: 4,
+        title: 'Finale 4/10 — Scudo di Folla',
+        type: 'success',
+        description: 'Salti sul palco e prendi il microfono con le mani tremanti. La band interrompe il riff e le luci bianche illuminano il coniglio.',
+        outcome: 'Il pubblico fischia il tuo inseguitore, i volontari della sicurezza lo circondano e gli strappano la maschera. L\'uomo scompare tra divise blu mentre tu scendi tra applausi increduli.',
+        lesson: 'Chiedere aiuto ad alta voce trasforma gli spettatori in difensori.'
+    },
+    identity_reveal: {
+        number: 5,
+        title: 'Finale 5/10 — Sotto la Maschera',
+        type: 'neutral',
+        description: 'Ti giri di scatto e afferri le orecchie di lattice. Le dita incontrano pelle sudata nascosta dal trucco bianco.',
+        outcome: 'Sotto la maschera riconosci un vecchio amico che avevi smascherato anni fa per un inganno. Lui esita, abbassa il coltello e sussurra: «Volevo solo farti sentire la mia stessa paura». Approfitti del suo turbamento e ti allontani tra la folla.',
+        lesson: 'A volte il vero pericolo è un volto familiare che non hai mai davvero affrontato.'
+    },
+    panic_trample: {
+        number: 6,
+        title: 'Finale 6/10 — Calpestato dal Caos',
+        type: 'fail',
+        description: 'Lanci l\'allarme e spingi la folla: urla, bicchieri che volano, maschere che cadono.',
+        outcome: 'Una marea di corpi ti travolge. Cadi a terra e le luci stroboscopiche lampeggiano mentre il coniglio ti osserva da sopra il parapetto, certo che non ti rialzerai in tempo.',
+        lesson: 'Il caos indiscriminato punisce prima chi lo scatena.'
+    },
+    bus_driver_save: {
+        number: 7,
+        title: 'Finale 7/10 — Autista Complice',
+        type: 'success',
+        description: 'Bussi sulla cabina, spiegando a raffica cosa sta accadendo. Gli occhi dell\'autista corrono allo specchietto.',
+        outcome: 'Le porte pneumatiche si chiudono, il bus scatta avanti e lascia il coniglio in mezzo alla strada. L\'autista devia su un percorso secondario e ti lascia in un deposito illuminato, dove due vigilanti ti offrono riparo.',
+        lesson: 'La fiducia riposta nella persona giusta può aprire strade insperate.'
+    },
+    bus_trap: {
+        number: 8,
+        title: 'Finale 8/10 — Corsa in Trappola',
+        type: 'fail',
+        description: 'Ti rannicchi tra i sedili, trattenendo il fiato mentre le porte si chiudono.',
+        outcome: 'Il bus parte, ma lo senti salire all\'ultima fermata. Il coniglio cammina lentamente lungo il corridoio, la lama che batte contro i pali cromati, finché non si ferma proprio davanti a te.',
+        lesson: 'Nascondersi senza controllare la via di uscita significa consegnarsi nelle mani dell\'inseguitore.'
+    },
+    house_siege: {
+        number: 9,
+        title: 'Finale 9/10 — Assedio nella Casa Vuota',
+        type: 'fail',
+        description: 'Spostare la libreria blocca la porta, ma la casa geme sotto la sua forza.',
+        outcome: 'Le assi si spezzano una ad una. Sei costretto a indietreggiare verso la scala scricchiolante mentre il coniglio si apre un varco tra schegge e polvere.',
+        lesson: 'Le barricate senza un piano di fuga trasformano la difesa in condanna.'
+    },
+    house_tunnel_escape: {
+        number: 10,
+        title: 'Finale 10/10 — Galleria Segreta',
+        type: 'success',
+        description: 'Sollevi il tappeto sbrindellato, trovi l\'anello di ferro e apri la botola.',
+        outcome: 'Strisci nel tunnel di servizio, illuminato solo da candele spezzate. Esci sul canale tra le barche decorate, lasciando il coniglio a perdersi nei corridoi della casa.',
+        lesson: 'Conoscere le leggende urbane e credere nei passaggi segreti può salvarti la vita.'
+    }
+};
+
+function buildNodeEmbed(nodeId, { config, client }, user) {
+    const node = storyNodes[nodeId];
+    const optionsText = node.options
+        .map((option, index) => `**${index + 1}. ${option.label}** — ${option.detail}`)
+        .join('\n');
+
+    return createEmbed({
+        color: config.embedColors.info,
+        title: node.title,
+        description: `${node.description}\n\n${optionsText}`,
+        botAvatar: client.user.displayAvatarURL(),
+        author: {
+            name: `${user.username || user.globalName || 'Giocatore'} vs. Coniglio`,
+            icon_url: user.displayAvatarURL?.() || null
+        }
+    });
+}
+
+function buildEndingEmbed(endingId, { config, client }, user) {
+    const ending = endings[endingId];
+    const colorMap = {
+        success: config.embedColors.success,
+        fail: config.embedColors.error,
+        neutral: config.embedColors.info
+    };
+    const verdictMap = {
+        success: '✅ Hai seminato il coniglio.',
+        fail: '❌ Il coniglio ha avuto la meglio.',
+        neutral: '🌀 Sopravvivi, ma il mistero resta aperto.'
+    };
+
+    return createEmbed({
+        color: colorMap[ending.type] || config.embedColors.default,
+        title: ending.title,
+        description: `${ending.description}\n\n${ending.outcome}`,
+        fields: [
+            {
+                name: 'Esito',
+                value: verdictMap[ending.type]
+            },
+            {
+                name: 'Lezione appresa',
+                value: ending.lesson
+            }
+        ],
+        botAvatar: client.user.displayAvatarURL(),
+        author: {
+            name: `${user.username || user.globalName || 'Giocatore'} — Destino sigillato`,
+            icon_url: user.displayAvatarURL?.() || null
+        }
+    });
+}
+
+// Nuova versione con inventario/personaggio
+function getRenderableNode(nodeId, session) {
+    const base = storyNodes[nodeId];
+    if (!base) return null;
+    const node = { title: base.title, description: base.description, options: [...(base.options || [])] };
+    const list = nodeCollectibles[nodeId] || [];
+    for (const itemKey of list) {
+        const item = ITEMS[itemKey];
+        const collectKey = `${nodeId}:${itemKey}`;
+        if (!session.collected[collectKey]) {
+            node.options.push({
+                id: `collect_${itemKey}`,
+                label: `Raccogli ${item.name}`,
+                detail: item.desc,
+                emoji: item.emoji,
+                target: { type: 'collect', id: itemKey }
+            });
+        }
+    }
+    return node;
+}
+
+function buildNodeEmbedV2(nodeId, { config, client }, user, session) {
+    const node = getRenderableNode(nodeId, session);
+    const optionsText = node.options
+        .map((option, index) => `**${index + 1}. ${option.label}** — ${option.detail}`)
+        .join('\n');
+
+    const fields = [];
+    if (session?.character) {
+        fields.push({ name: 'Personaggio', value: `${session.character.emoji} ${session.character.name}`, inline: true });
+    }
+    const invList = Object.keys(session?.inventory || {}).map(k => {
+        const it = ITEMS[k];
+        const count = session.inventory[k];
+        return ${it?.emoji || '??'} ;
+    }).join(', ');
+    fields.push({ name: 'Zaino', value: invList || 'vuoto', inline: true });
+
+    return createEmbed({
+        color: config.embedColors.info,
+        title: node.title,
+        description: `${node.description}\n\n${optionsText}`,
+        botAvatar: client.user.displayAvatarURL(),
+        fields,
+        author: {
+            name: `${user.username || user.globalName || 'Giocatore'} vs. Coniglio`,
+            icon_url: user.displayAvatarURL?.() || null
+        }
+    });
+}
+
+function buildOptionRows(userId, node) {
+    const rows = [];
+    let currentRow = new ActionRowBuilder();
+
+    node.options.forEach((option, index) => {
+        if (currentRow.components.length === 5) {
+            rows.push(currentRow);
+            currentRow = new ActionRowBuilder();
+        }
+
+        const targetType = option.target.type;
+        const targetId = option.target.id;
+        const button = new ButtonBuilder()
+            .setCustomId(`${CUSTOM_ID_PREFIX}|${userId}|${targetType}|${targetId}`)
+            .setLabel(option.label)
+            .setStyle(
+                targetType === 'ending' && endings[targetId]?.type === 'fail' ? ButtonStyle.Danger :
+                targetType === 'collect' ? ButtonStyle.Secondary :
+                targetType === 'char' ? ButtonStyle.Success : ButtonStyle.Primary
+            );
+
+        if (option.emoji) button.setEmoji(option.emoji);
+
+        currentRow.addComponents(button);
+
+        if (index === node.options.length - 1) {
+            rows.push(currentRow);
+        }
+    });
+
+    if (currentRow.components.length && !rows.includes(currentRow)) {
+        rows.push(currentRow);
+    }
+
+    return rows;
+}
+
+function buildEndingRows(userId, endingId) {
+    const ending = endings[endingId];
+    const infoButton = new ButtonBuilder()
+        .setCustomId(`${CUSTOM_ID_PREFIX}|${userId}|info|${endingId}`)
+        .setLabel(`Finale`)
+        .setStyle(ButtonStyle.Secondary)
+        .setDisabled(true);
+
+    const restartButton = new ButtonBuilder()
+        .setCustomId(`${CUSTOM_ID_PREFIX}|${userId}|restart|intro`)
+        .setLabel('Ricomincia la fuga')
+        .setEmoji('🔁')
+        .setStyle(ButtonStyle.Success);
+
+    return [
+        new ActionRowBuilder().addComponents(infoButton),
+        new ActionRowBuilder().addComponents(restartButton)
+    ];
+}
+
+async function handleNode(interaction, nodeId, context) {
+    const session = getSession(interaction.user.id);
+    const node = getRenderableNode(nodeId, session);
+    if (!node) {
+        await interaction.update({
+            content: '⚠️ Questo bivio sembra svanito nella nebbia...',
+            components: []
+        });
+        return;
+    }
+
+    const embed = buildNodeEmbedV2(nodeId, context, interaction.user, session);
+    const components = buildOptionRows(interaction.user.id, node);
+    await interaction.update({ embeds: [embed], components, content: '' });
+}
+
+async function handleEnding(interaction, endingId, context) {
+    const ending = endings[endingId];
+    if (!ending) {
+        await interaction.update({
+            content: '❌ Finale sconosciuto. La storia si spezza qui.',
+            components: []
+        });
+        return;
+    }
+
+    const embed = buildEndingEmbed(endingId, context, interaction.user);
+    const components = buildEndingRows(interaction.user.id, endingId);
+    await interaction.update({ embeds: [embed], components, content: '' });
+}
+
+// Versione robusta dell'embed del nodo, con inventario/PG
+function buildNodeEmbedV2(nodeId, { config, client }, user, session) {
+    const node = getRenderableNode(nodeId, session);
+    const optionsText = node.options
+        .map((option, index) => `**${index + 1}. ${option.label}** — ${option.detail}`)
+        .join('\n');
+
+    const fields = [];
+    if (session?.character) {
+        fields.push({ name: 'Personaggio', value: `${session.character.emoji} ${session.character.name}`, inline: true });
+    }
+    const invList = Object.keys(session?.inventory || {}).map(k => {
+        const it = ITEMS[k];
+        const count = session.inventory[k];
+        return `${it?.emoji || '🎒'} ${it?.name || k}${count > 1 ? ' ×' + count : ''}`;
+    }).join(', ');
+    fields.push({ name: 'Zaino', value: invList || 'vuoto', inline: true });
+
+    return createEmbed({
+        color: config.embedColors.info,
+        title: node.title,
+        description: `${node.description}\n\n${optionsText}`,
+        botAvatar: client.user.displayAvatarURL(),
+        fields,
+        author: {
+            name: `${user.username || user.globalName || 'Giocatore'} vs. Coniglio`,
+            icon_url: user.displayAvatarURL?.() || null
+        }
+    });
+}
+
+// Variante con inventario/personaggi
+function applyModifiers(endingId, session) {
+    if (endingId === 'alley_caught') {
+        if (hasItem(session, 'spray')) { useItem(session, 'spray'); return 'spray_escape'; }
+        if (session.character?.perk === 'speed') return 'rooftop_escape';
+        if (session.character?.perk === 'ritual' && hasItem(session, 'amuleto')) return 'amulet_guard';
+    }
+    if (endingId === 'alley_fireworks') {
+        if (hasItem(session, 'accendino') || hasItem(session, 'fuochi')) return 'fireworks_escape';
+    }
+    if (endingId === 'bus_trap') {
+        if (hasItem(session, 'spray')) { useItem(session, 'spray'); return 'spray_escape'; }
+        if (hasItem(session, 'maschera') || session.character?.perk === 'blend') return 'mask_blend';
+        if (session.character?.perk === 'speed') return 'rooftop_escape';
+    }
+    if (endingId === 'house_siege') {
+        if (hasItem(session, 'amuleto')) return 'amulet_guard';
+        if (session.character?.perk === 'tools' && hasItem(session, 'chiave')) return 'house_tunnel_escape';
+    }
+    if (endingId === 'crowd_panic') {
+        if (hasItem(session, 'maschera') || session.character?.perk === 'blend') return 'mask_blend';
+    }
+    return endingId;
+}
+
+async function handleEndingWithSession(interaction, endingId, context) {
+    const session = getSession(interaction.user.id);
+    const redirected = applyModifiers(endingId, session);
+    const ending = endings[redirected];
+    if (!ending) {
+        await interaction.update({
+            content: '�?O Finale sconosciuto. La storia si spezza qui.',
+            components: []
+        });
+        return;
+    }
+
+    const embed = buildEndingEmbed(redirected, context, interaction.user);
+    const components = buildEndingRows(interaction.user.id, redirected);
+    await interaction.update({ embeds: [embed], components, content: '' });
+}
+
+export default {
+    name: 'halloweengame',
+    description: 'Affronta una fuga a bivi durante Halloween contro l\'uomo dal coniglio.',
+    aliases: ['fuga', 'coniglio', 'rabbit'],
+    cooldown: 5,
+    async execute(message, args, { client, config }) {
+        const context = { client, config };
+        sessions.delete(message.author.id);
+        const session = getSession(message.author.id);
+        const node = getRenderableNode('intro', session);
+        const embed = buildNodeEmbedV2('intro', context, message.author, session);
+        const components = buildOptionRows(message.author.id, node);
+
+        await message.reply({
+            content: '🎃 **Fai la tua scelta, nessun passo è scontato.**',
+            embeds: [embed],
+            components,
+            allowedMentions: { repliedUser: false }
+        });
+    },
+    async onInteractionCreate(interaction, { client, config }) {
+        if (!interaction.isButton()) return;
+
+        const parts = interaction.customId.split('|');
+        if (parts.length < 4) return;
+        const [prefix, ownerId, targetType, targetId] = parts;
+        if (prefix !== CUSTOM_ID_PREFIX) return;
+
+        if (interaction.user.id !== ownerId) {
+            if (!interaction.replied && !interaction.deferred) {
+                await interaction.reply({
+                    content: 'Solo chi ha avviato la fuga può decidere il prossimo passo.',
+                    ephemeral: true
+                }).catch(() => {});
+            }
+            return;
+        }
+
+        const context = { client, config };
+        const session = getSession(interaction.user.id);
+
+        if (targetType === 'restart') {
+            sessions.delete(interaction.user.id);
+            const fresh = getSession(interaction.user.id);
+            const node = getRenderableNode('intro', fresh);
+            const embed = buildNodeEmbedV2('intro', context, interaction.user, fresh);
+            const components = buildOptionRows(interaction.user.id, node);
+            await interaction.update({ embeds: [embed], components, content: '' });
+            return;
+        }
+
+        if (targetType === 'char') {
+            const picked = characters[targetId];
+            if (!picked) return;
+            session.character = picked;
+            picked.startItems.forEach(k => addItem(session, k, 1));
+            const node = getRenderableNode('start', session);
+            const embed = buildNodeEmbedV2('start', context, interaction.user, session);
+            const components = buildOptionRows(interaction.user.id, node);
+            await interaction.update({ embeds: [embed], components, content: '' });
+            await interaction.followUp({ content: `Hai scelto ${picked.emoji} ${picked.name}. Oggetti iniziali: ${picked.startItems.map(k => ITEMS[k].emoji + ' ' + ITEMS[k].name).join(', ')}`, ephemeral: true }).catch(() => {});
+            return;
+        }
+
+        if (targetType === 'collect') {
+            const item = ITEMS[targetId];
+            if (!item) return;
+            const titlesToNode = Object.fromEntries(Object.entries(storyNodes).map(([k, v]) => [v.title, k]));
+            const currentTitle = interaction.message.embeds?.[0]?.title;
+            const nodeIdGuess = titlesToNode[currentTitle] || 'start';
+            session.collected[`${nodeIdGuess}:${item.key}`] = true;
+            addItem(session, item.key, 1);
+            const node = getRenderableNode(nodeIdGuess, session);
+            const embed = buildNodeEmbedV2(nodeIdGuess, context, interaction.user, session);
+            const components = buildOptionRows(interaction.user.id, node);
+            await interaction.update({ embeds: [embed], components, content: '' });
+            await interaction.followUp({ content: `Raccolto ${item.emoji} ${item.name}.`, ephemeral: true }).catch(() => {});
+            return;
+        }
+
+        if (targetType === 'node') {
+            await handleNode(interaction, targetId, context);
+            return;
+        }
+
+        if (targetType === 'ending') {
+            await handleEndingWithSession(interaction, targetId, context);
+            return;
+        }
+
+        await interaction.update({ content: 'La scelta sembra spegnersi nel nulla.', components: [] }).catch(() => {});
+    }
+};
+
+
+
