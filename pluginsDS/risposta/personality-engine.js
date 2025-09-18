@@ -209,3 +209,27 @@ export function addResponseVariety(response) {
 
 // Export personality data for other plugins
 export { PERSONALITY, RESPONSE_TEMPLATES };
+
+// Export as plugin for the loader (utility plugin)
+export default {
+    name: 'personality-engine',
+    description: 'Core personality engine for AI responses - utility module',
+    category: 'risposta',
+    
+    // Utility plugin - provides info about the personality system
+    async execute(message, args, context) {
+        const embed = createEmbed({
+            color: '#00FFFF',
+            title: '🧠 Personality Engine',
+            description: 'Motore di personalità AI attivo!\n\n' +
+                        `**Tratti personalità:**\n` +
+                        `• Sassy: ${PERSONALITY.sassy * 100}%\n` +
+                        `• Defensive: ${PERSONALITY.defensive * 100}%\n\n` +
+                        `**Risposte disponibili:** ${Object.keys(RESPONSE_TEMPLATES).length} categorie\n` +
+                        `**Trigger words:** ${Object.keys(PERSONALITY.triggerWords).length} parole chiave`,
+            timestamp: new Date()
+        });
+        
+        await message.reply({ embeds: [embed] });
+    }
+};
