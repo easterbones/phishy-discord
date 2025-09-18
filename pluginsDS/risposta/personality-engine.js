@@ -137,42 +137,45 @@ function selectResponse(context, responses) {
 export function generateResponse(message, botUser) {
     const context = analyzeMessage(message, botUser);
     
-    // Don't respond to everything - be selective
+    // VERY selective response conditions - only respond when directly addressed
     const shouldRespond = context.isMention || 
-                         context.isReply || 
-                         context.triggerScore >= 5 ||
-                         Math.random() < 0.1; // 10% chance for random engagement
+                         context.isReply ||
+                         // Only respond to specific strong triggers, not random content
+                         (context.keywords.includes('bot') && (context.isMention || context.isReply)) ||
+                         (context.keywords.includes('robot') && (context.isMention || context.isReply)) ||
+                         (context.keywords.includes('easter') && context.triggerScore >= 8) ||
+                         (context.keywords.some(k => ['cyan', 'azzurro', 'celeste'].includes(k)) && context.triggerScore >= 8);
     
     if (!shouldRespond) return null;
     
     let selectedResponse = null;
     let responseType = 'random';
     
-    // Priority-based response selection
-    if (context.keywords.includes('bot') || context.keywords.includes('robot')) {
+    // Priority-based response selection - only strong triggers
+    if ((context.keywords.includes('bot') || context.keywords.includes('robot')) && (context.isMention || context.isReply)) {
         selectedResponse = selectResponse(context, RESPONSE_TEMPLATES.botDefense);
         responseType = 'botDefense';
-    } else if (context.keywords.includes('easter')) {
+    } else if (context.keywords.includes('easter') && context.triggerScore >= 8) {
         selectedResponse = selectResponse(context, RESPONSE_TEMPLATES.easterLove);
         responseType = 'easterLove';
-    } else if (context.keywords.some(k => PERSONALITY.loves.includes(k))) {
+    } else if (context.keywords.some(k => ['cyan', 'azzurro', 'celeste'].includes(k)) && context.triggerScore >= 8) {
         selectedResponse = selectResponse(context, RESPONSE_TEMPLATES.colorLove);
         responseType = 'colorLove';
-    } else if (context.keywords.includes('grazie')) {
-        selectedResponse = selectResponse(context, RESPONSE_TEMPLATES.thanks);
-        responseType = 'thanks';
-    } else if (context.keywords.includes('ciao')) {
-        selectedResponse = selectResponse(context, RESPONSE_TEMPLATES.greetings);
-        responseType = 'greetings';
-    } else if (context.sentiment < -2) {
-        selectedResponse = selectResponse(context, RESPONSE_TEMPLATES.insults);
-        responseType = 'insults';
     } else if (context.isMention || context.isReply) {
-        selectedResponse = selectResponse(context, RESPONSE_TEMPLATES.greetings);
-        responseType = 'greetings';
-    } else {
-        selectedResponse = selectResponse(context, RESPONSE_TEMPLATES.random);
-        responseType = 'random';
+        // Only respond to direct mentions/replies with contextual responses
+        if (context.keywords.includes('grazie')) {
+            selectedResponse = selectResponse(context, RESPONSE_TEMPLATES.thanks);
+            responseType = 'thanks';
+        } else if (context.keywords.includes('ciao')) {
+            selectedResponse = selectResponse(context, RESPONSE_TEMPLATES.greetings);
+            responseType = 'greetings';
+        } else if (context.sentiment < -2) {
+            selectedResponse = selectResponse(context, RESPONSE_TEMPLATES.insults);
+            responseType = 'insults';
+        } else {
+            selectedResponse = selectResponse(context, RESPONSE_TEMPLATES.greetings);
+            responseType = 'greetings';
+        }
     }
     
     return {
